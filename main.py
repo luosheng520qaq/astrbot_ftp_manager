@@ -28,10 +28,22 @@ class FtpControlPlugin(Star):
             text = outcome.get("message", "操作完成")
             await event.send(event.plain_result(text))
             return outcome
-        except Exception as e:
-            logger.error(f"ftp_manage error: {e}")
-            await event.send(event.plain_result(f"FTP操作失败: {e}"))
-            return {"ok": False, "error": str(e), "operation": operation, "server_path": server_path}
+        except aioftp.StatusCodeError as e:
+            msg = f"FTP状态错误: 期望{tuple(e.expected_codes)}, 实际{tuple(e.received_codes)}, 信息: {e.info}"
+            await event.send(event.plain_result(msg))
+            return {"ok": False, "error": "StatusCodeError", "expected": tuple(e.expected_codes), "received": tuple(e.received_codes), "info": e.info, "operation": operation, "server_path": server_path}
+        except FileNotFoundError as e:
+            await event.send(event.plain_result(f"本地文件不存在: {e}"))
+            return {"ok": False, "error": "FileNotFoundError", "detail": str(e), "operation": operation, "server_path": server_path, "local_path": local_path}
+        except PermissionError as e:
+            await event.send(event.plain_result(f"权限不足: {e}"))
+            return {"ok": False, "error": "PermissionError", "detail": str(e), "operation": operation, "server_path": server_path, "local_path": local_path}
+        except ValueError as e:
+            await event.send(event.plain_result(f"参数错误: {e}"))
+            return {"ok": False, "error": "ValueError", "detail": str(e), "operation": operation, "server_path": server_path}
+        except OSError as e:
+            await event.send(event.plain_result(f"系统错误: {e}"))
+            return {"ok": False, "error": "OSError", "detail": str(e), "operation": operation, "server_path": server_path, "local_path": local_path}
 
     async def _do_ftp(self, operation: str, server_path: str, local_path: str, new_name: str):
         cfg = self.config or {}
@@ -42,8 +54,16 @@ class FtpControlPlugin(Star):
         password = server.get("password", "")
         root_dir = cfg.get("ftp_root_dir", "/")
         base_url = cfg.get("base_access_url", "")
+        security = cfg.get("security", {})
+        ftps_explicit = bool(security.get("ftps_explicit", False))
+        ftps_implicit = bool(security.get("ftps_implicit", False))
         remote_path = str(PurePosixPath(root_dir) / PurePosixPath(server_path.lstrip("/")))
-        async with aioftp.Client.context(host, port=port, user=user, password=password) as client:
+        ctx_kwargs = {"port": port, "user": user, "password": password}
+        if ftps_implicit:
+            ctx_kwargs["ssl"] = True
+        if ftps_explicit:
+            ctx_kwargs["upgrade_to_tls"] = True
+        async with aioftp.Client.context(host, **ctx_kwargs) as client:
             if operation == "upload":
                 await client.upload(local_path, remote_path, write_into=True)
                 url = self._build_url(base_url, root_dir, remote_path)
@@ -79,5 +99,5 @@ class FtpControlPlugin(Star):
             root = PurePosixPath(root_dir)
             rel = rp.relative_to(root)
             return base_url.rstrip("/") + "/" + str(rel)
-        except Exception:
+        except ValueError:
             return ""

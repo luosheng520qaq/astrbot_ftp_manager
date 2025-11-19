@@ -32,5 +32,21 @@
     "description": "基础访问URL（用于拼接链接）",
     "type": "string",
     "default": ""
+  },
+  "security": {
+    "description": "安全设置",
+    "type": "object",
+    "items": {
+      "ftps_explicit": {
+        "description": "显式FTPS（在连接后升级到TLS）",
+        "type": "bool",
+        "default": false
+      },
+      "ftps_implicit": {
+        "description": "隐式FTPS（直接使用SSL/TLS连接）",
+        "type": "bool",
+        "default": false
+      }
+    }
   }
 }
