@@ -2,3 +2,4 @@ name: astrbot_plugin_ftp_control
 description: 通过 LLM 工具执行 FTP 文件操作
 version: 1.0.0
 author: Xican
+repo: https://github.com/luosheng520qaq/astrbot_ftp_manager
