@@ -1,0 +1,36 @@
+{
+  "server": {
+    "description": "FTP服务器连接配置",
+    "type": "object",
+    "items": {
+      "ip": {
+        "description": "服务器IP",
+        "type": "string"
+      },
+      "port": {
+        "description": "服务器端口",
+        "type": "int",
+        "default": 21
+      },
+      "username": {
+        "description": "用户名",
+        "type": "string"
+      },
+      "password": {
+        "description": "密码",
+        "type": "string",
+        "obvious_hint": true
+      }
+    }
+  },
+  "ftp_root_dir": {
+    "description": "FTP根目录（远程）",
+    "type": "string",
+    "default": "/"
+  },
+  "base_access_url": {
+    "description": "基础访问URL（用于拼接链接）",
+    "type": "string",
+    "default": ""
+  }
+}
