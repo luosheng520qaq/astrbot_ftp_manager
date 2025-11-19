@@ -6,7 +6,7 @@ import aioftp
 from pathlib import PurePosixPath
 
 
-@register("astrbot_plugin_ftp_control", "astrbotdev", "FTP 控制工具，通过 LLM 工具执行文件操作", "1.0.0")
+@register("astrbot_plugin_ftp_control", "Xican", "FTP 控制工具，通过 LLM 工具执行文件操作", "1.0.0")
 class FtpControlPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
