@@ -21,7 +21,7 @@ class FtpControlPlugin(Star):
         Args:
             operation(string): 操作类型，可选 upload, download, delete, rename, mkdir, list
             server_path(string): 服务器上的路径
-            local_path(string): 本地文件路径
+            local_path(string): 本地文件路径(只能是绝对路径)
             new_name(string): 新名字（用于重命名）
         '''
         try:
