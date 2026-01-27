@@ -15,14 +15,16 @@ class FtpControlPlugin(Star):
 
     @filter.llm_tool(name="ftp_manage")
     async def ftp_manage(self, event: AstrMessageEvent, operation: str, server_path: str = "/", local_path: str = "", new_name: str = ""):
-        '''将文件与网络服务器进行交互，支持上传、下载、删除、重命名、创建目录、列出目录内容等操作，此工具能够将文件转为对应的网络url。
-        此工具能够将文件转为对应的网络url
+        '''将文件与网络服务器进行交互，支持上传、下载、删除、重命名、创建目录、列出目录内容等操作。此工具能够将文件转为对应的网络url。
 
         Args:
             operation(string): 操作类型，可选 upload, download, delete, rename, mkdir, list
-            server_path(string): 服务器上的路径(当operation为upload时，请不要传参)
-            local_path(string): 本地文件路径(只能是绝对路径)
-            new_name(string): 新名字（用于重命名）
+            server_path(string): 服务器路径。
+                                 - upload: 若以 / 结尾或为空，视为目标目录（文件名保持不变）；若不以 / 结尾，视为完整目标文件路径（可重命名）。
+                                 - download/delete/rename: 目标文件或目录的路径。
+                                 - mkdir/list: 目录路径。
+            local_path(string): 本地文件绝对路径。upload 操作必填；download 操作可选（若为空则下载到当前目录）。
+            new_name(string): 新名字（仅 rename 操作需要）。
         '''
         try:
             outcome = await self._do_ftp(operation, server_path, local_path, new_name)
@@ -59,6 +61,13 @@ class FtpControlPlugin(Star):
         ftps_explicit = bool(security.get("ftps_explicit", False))
         ftps_implicit = bool(security.get("ftps_implicit", False))
         operation = (operation or "").strip().lower()
+        
+        # Determine if upload target is a directory based on trailing slash
+        is_explicit_dir_upload = False
+        if operation == "upload":
+            if not server_path or server_path.strip() == "" or server_path.strip().endswith("/"):
+                is_explicit_dir_upload = True
+
         server_path = server_path or "/"
         remote_path = str(PurePosixPath(root_dir) / PurePosixPath(server_path.lstrip("/")))
         ctx_kwargs = {"port": port, "user": user, "password": password}
@@ -70,12 +79,14 @@ class FtpControlPlugin(Star):
             if operation == "upload":
                 if not local_path:
                     raise ValueError("缺少 local_path")
-                await client.upload(local_path, remote_path, write_into=True)
+                
+                await client.upload(local_path, remote_path, write_into=is_explicit_dir_upload)
+                
                 local_name = os.path.basename(local_path)
-                is_dir_target = (server_path.strip() in ("", "/")) or server_path.strip().endswith("/")
-                dest_remote = str(PurePosixPath(remote_path) / local_name) if is_dir_target else remote_path
+                dest_remote = str(PurePosixPath(remote_path) / local_name) if is_explicit_dir_upload else remote_path
                 url = self._build_url(base_url, root_dir, dest_remote)
                 return {"ok": True, "operation": operation, "remote_path": dest_remote, "url": url, "message": f"已上传到 {dest_remote}" + (f" 可访问: {url}" if url else "")}
+
             if operation == "download":
                 if not server_path or server_path.strip() in ("", "/"):
                     raise ValueError("下载操作需要指定服务器路径")
