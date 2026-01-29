@@ -98,54 +98,37 @@ class FtpControlPlugin(Star):
                     raise ValueError("缺少 local_path")
                 if not os.path.isfile(local_path):
                     raise ValueError(f"本地文件不存在或不是文件: {local_path}")
-                
-                # 显式计算最终目标路径，避免 aioftp write_into 参数的歧义
-                # 默认策略：假设它是文件路径
                 is_dir_target = False
-                
-                # 策略1: 显式目录标识 (以 / 结尾)
+                has_extension = "." in PurePosixPath(server_path).name
                 if server_path.strip().endswith("/") or server_path.strip() == "":
                     is_dir_target = True
-                
-                # 策略2: 如果不以 / 结尾，但看起来不像文件 (没有后缀)，且服务端可能存在该目录 -> 尝试探测
-                # 反之，如果包含后缀 (如 .html, .jpg)，我们强烈假设它是文件，跳过目录探测 (除非上传失败)
-                elif "." not in PurePosixPath(server_path).name:
+                elif not has_extension:
                     try:
                         stat_res = await client.stat(remote_path)
                         if stat_res and "type" in stat_res and stat_res["type"] == "dir":
                             is_dir_target = True
                     except Exception:
                         pass
-                
-                # 策略3 (冗余): 如果用户明确指定了后缀，强制视为文件模式 (is_dir_target = False)
-                if "." in PurePosixPath(server_path).name:
-                     is_dir_target = False
 
                 if is_dir_target:
-                    # 如果目标是目录，追加文件名
                     local_name = os.path.basename(local_path)
                     final_remote_path = str(PurePosixPath(remote_path) / local_name)
                 else:
-                    # 如果目标是文件路径，直接使用
                     final_remote_path = remote_path
 
-                # 强制使用 write_into=False，因为我们已经计算了完整路径
-                # 这告诉 aioftp: "这就是我要上传到的完整路径，不要再把它当目录处理了"
                 try:
                     await client.upload(local_path, final_remote_path, write_into=False)
                 except aioftp.StatusCodeError as e:
-                    # 容错重试：如果上传失败且提示 Is a directory (553 或类似)，
-                    # 说明服务端确实有个同名目录，但我们之前的判断漏掉了。
-                    # 此时必须将文件上传到该目录下，而不是覆盖目录。
                     if "directory" in str(e).lower() or "folder" in str(e).lower() or e.received_codes == ('553',):
-                         local_name = os.path.basename(local_path)
-                         retry_path = str(PurePosixPath(remote_path) / local_name)
-                         # 防止死循环 (比如 target 就是 /a/b.jpg 且确实是目录? 极少见)
-                         if retry_path != final_remote_path: 
-                             await client.upload(local_path, retry_path, write_into=False)
-                             final_remote_path = retry_path
-                         else:
-                             raise e
+                        if has_extension:
+                            raise ValueError(f"目标路径为目录，无法覆盖文件路径: {server_path}")
+                        local_name = os.path.basename(local_path)
+                        retry_path = str(PurePosixPath(remote_path) / local_name)
+                        if retry_path != final_remote_path: 
+                            await client.upload(local_path, retry_path, write_into=False)
+                            final_remote_path = retry_path
+                        else:
+                            raise e
                     else:
                         raise e
                 
