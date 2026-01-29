@@ -5,6 +5,7 @@ from astrbot.api import AstrBotConfig
 import aioftp
 from pathlib import PurePosixPath
 import os
+import ssl
 
 
 @register("astrbot_plugin_ftp_control", "Xican", "FTP 控制工具，通过 LLM 工具执行文件操作", "1.0.0")
@@ -60,6 +61,7 @@ class FtpControlPlugin(Star):
         security = cfg.get("security", {})
         ftps_explicit = bool(security.get("ftps_explicit", False))
         ftps_implicit = bool(security.get("ftps_implicit", False))
+        ssl_verify = bool(security.get("ssl_verify", False))
         operation = (operation or "").strip().lower()
         
         # Determine if upload target is a directory based on trailing slash
@@ -70,12 +72,28 @@ class FtpControlPlugin(Star):
 
         server_path = server_path or "/"
         remote_path = str(PurePosixPath(root_dir) / PurePosixPath(server_path.lstrip("/")))
-        ctx_kwargs = {"port": port, "user": user, "password": password}
-        if ftps_implicit:
-            ctx_kwargs["ssl"] = True
-        if ftps_explicit:
-            ctx_kwargs["upgrade_to_tls"] = True
-        async with aioftp.Client.context(host, **ctx_kwargs) as client:
+        
+        # Prepare SSL Context
+        ssl_ctx = None
+        if ftps_explicit or ftps_implicit:
+            ssl_ctx = ssl.create_default_context()
+            if not ssl_verify:
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        async with aioftp.Client() as client:
+            # Connect
+            if ftps_implicit:
+                await client.connect(host, port, ssl=ssl_ctx or True)
+                await client.login(user, password)
+            elif ftps_explicit:
+                await client.connect(host, port)
+                await client.auth_tls(ssl=ssl_ctx or True)
+                await client.login(user, password)
+            else:
+                await client.connect(host, port)
+                await client.login(user, password)
+
             if operation == "upload":
                 if not local_path:
                     raise ValueError("缺少 local_path")

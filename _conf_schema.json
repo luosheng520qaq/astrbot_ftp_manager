@@ -46,6 +46,11 @@
         "description": "隐式FTPS（直接使用SSL/TLS连接）",
         "type": "bool",
         "default": false
+      },
+      "ssl_verify": {
+        "description": "验证SSL证书（自签名证书请设为false）",
+        "type": "bool",
+        "default": false
       }
     }
   }
