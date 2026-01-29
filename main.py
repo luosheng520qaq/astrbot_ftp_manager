@@ -21,9 +21,8 @@ class FtpControlPlugin(Star):
         Args:
             operation(string): 操作类型: upload, download, delete, rename, mkdir, list
             server_path(string): 服务器端路径。
-                                 - upload: 
-                                   * 如果要重命名保存，请提供完整文件路径 (如 "/data/new_name.jpg")。
-                                   * 如果要保存到目录下，请以 "/" 结尾 (如 "/data/")，文件名将保持不变。
+                                 - upload: 强烈建议提供**完整的目标文件路径** (包含文件名和后缀)，例如 "/data/image.png"。
+                                   * 若仅提供目录路径 (如 "/data" 或 "/data/")，系统将尝试自动推断，但为了准确性请尽量精确。
                                  - download/delete/rename: 目标文件或目录的完整路径。
                                  - mkdir/list: 目录路径。
             local_path(string): 本地文件绝对路径。
@@ -80,7 +79,8 @@ class FtpControlPlugin(Star):
                 ssl_ctx.check_hostname = False
                 ssl_ctx.verify_mode = ssl.CERT_NONE
 
-        async with aioftp.Client() as client:
+        client = aioftp.Client()
+        try:
             # Connect
             if ftps_implicit:
                 await client.connect(host, port, ssl=ssl_ctx or True)
@@ -100,8 +100,27 @@ class FtpControlPlugin(Star):
                     raise ValueError(f"本地文件不存在或不是文件: {local_path}")
                 
                 # 显式计算最终目标路径，避免 aioftp write_into 参数的歧义
-                is_dir_target = server_path.strip().endswith("/") or server_path.strip() == ""
+                # 默认策略：假设它是文件路径
+                is_dir_target = False
                 
+                # 策略1: 显式目录标识 (以 / 结尾)
+                if server_path.strip().endswith("/") or server_path.strip() == "":
+                    is_dir_target = True
+                
+                # 策略2: 如果不以 / 结尾，但看起来不像文件 (没有后缀)，且服务端可能存在该目录 -> 尝试探测
+                # 反之，如果包含后缀 (如 .html, .jpg)，我们强烈假设它是文件，跳过目录探测 (除非上传失败)
+                elif "." not in PurePosixPath(server_path).name:
+                    try:
+                        stat_res = await client.stat(remote_path)
+                        if stat_res and "type" in stat_res and stat_res["type"] == "dir":
+                            is_dir_target = True
+                    except Exception:
+                        pass
+                
+                # 策略3 (冗余): 如果用户明确指定了后缀，强制视为文件模式 (is_dir_target = False)
+                if "." in PurePosixPath(server_path).name:
+                     is_dir_target = False
+
                 if is_dir_target:
                     # 如果目标是目录，追加文件名
                     local_name = os.path.basename(local_path)
@@ -112,7 +131,23 @@ class FtpControlPlugin(Star):
 
                 # 强制使用 write_into=False，因为我们已经计算了完整路径
                 # 这告诉 aioftp: "这就是我要上传到的完整路径，不要再把它当目录处理了"
-                await client.upload(local_path, final_remote_path, write_into=False)
+                try:
+                    await client.upload(local_path, final_remote_path, write_into=False)
+                except aioftp.StatusCodeError as e:
+                    # 容错重试：如果上传失败且提示 Is a directory (553 或类似)，
+                    # 说明服务端确实有个同名目录，但我们之前的判断漏掉了。
+                    # 此时必须将文件上传到该目录下，而不是覆盖目录。
+                    if "directory" in str(e).lower() or "folder" in str(e).lower() or e.received_codes == ('553',):
+                         local_name = os.path.basename(local_path)
+                         retry_path = str(PurePosixPath(remote_path) / local_name)
+                         # 防止死循环 (比如 target 就是 /a/b.jpg 且确实是目录? 极少见)
+                         if retry_path != final_remote_path: 
+                             await client.upload(local_path, retry_path, write_into=False)
+                             final_remote_path = retry_path
+                         else:
+                             raise e
+                    else:
+                        raise e
                 
                 url = self._build_url(base_url, root_dir, final_remote_path)
                 return {"ok": True, "operation": operation, "remote_path": final_remote_path, "url": url, "message": f"已上传到 {final_remote_path}" + (f" 可访问: {url}" if url else "")}
@@ -150,6 +185,12 @@ class FtpControlPlugin(Star):
                 msg = "\n".join(names) if names else f"{remote_path} 为空"
                 return {"ok": True, "operation": operation, "remote_path": remote_path, "items": names, "message": msg}
             raise ValueError("不支持的操作")
+        finally:
+            try:
+                await client.quit()
+            except Exception:
+                pass
+
 
     def _build_url(self, base_url: str, root_dir: str, remote_path: str) -> str:
         if not base_url:
